@@ -11,13 +11,13 @@
     "title": {
       "type": "string",
       "title": "Notification Title",
-      "description": "Title for the notification. Supports Jinja2 variable substitution. Available variables: workflow_name, run_id, run_url, status, triggered_by, artifact_path, step_name, step_status, state.outputs.<key>",
+      "description": "Title for the notification. Supports Jinja2 variable substitution and Markdown formatting. Available variables: workflow_name, run_id, run_url, status, triggered_by, step_name, step_status, state.outputs.<key>",
       "default": "Workflow Notification"
     },
     "body": {
       "type": "string",
       "title": "Notification Body",
-      "description": "Body of the notification. Supports Jinja2 variable substitution. Available variables: workflow_name, run_id, run_url, status, triggered_by, artifact_path, step_name, step_status, state.outputs.<key>",
+      "description": "Body of the notification. Supports Jinja2 variable substitution and Markdown formatting (bold, italic, lists, code, links). Available variables: workflow_name, run_id, run_url, status, triggered_by, step_name, step_status, state.outputs.<key>",
       "default": "Workflow executed successfully"
     }
   },

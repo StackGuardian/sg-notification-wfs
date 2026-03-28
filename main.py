@@ -9,13 +9,10 @@ Environment Variables:
     - BASE64_WORKFLOW_STEP_INPUT_VARIABLES: Base64 encoded workflow step input params
     - SG_MOUNTED_ARTIFACTS_DIR: Directory for workflow artifacts
     - SG_MOUNTED_WORKSPACE_ROOT_DIR: Directory containing terraform state
-    - SG_WORKFLOW_NAME: Name of the workflow
-    - SG_RUN_ID: Unique run identifier
-    - SG_RUN_URL: URL to the workflow run
-    - SG_WORKFLOW_STATUS: Current workflow status
-    - SG_TRIGGERED_BY: Who triggered the workflow
-    - SG_STEP_NAME: Current step name
-    - SG_STEP_STATUS: Current step status
+    - SG_WORKFLOW_ID: Workflow ID path (e.g., /wfgrps/my-group/wfs/my-workflow)
+    - SG_WORKFLOW_RUN_ID: Run ID path (e.g., /wfgrps/my-group/wfs/my-workflow/wfruns/run-id)
+    - SG_EXECUTOR_USER: User who triggered the workflow
+    - SG_STEP_NAME: Name of this workflow step
 """
 
 import os
@@ -61,6 +58,11 @@ def warn(message):
 
 def parse_variables():
     """Parse StackGuardian environment variables."""
+    debug("Listing available SG_* environment variables:")
+    sg_vars = {k: v for k, v in os.environ.items() if k.startswith("SG_")}
+    for key in sorted(sg_vars.keys()):
+        debug(f"  {key}={sg_vars[key][:80]}...")
+
     return {
         "working_dir": os.environ.get("SG_MOUNTED_IAC_SOURCE_CODE_DIR", ""),
         "artifacts_dir": os.environ.get("SG_MOUNTED_ARTIFACTS_DIR", ""),
@@ -101,15 +103,50 @@ def process_workflow_inputs(encoded_input):
 
 
 def get_workflow_metadata():
-    """Retrieve workflow metadata from StackGuardian environment variables."""
+    """
+    Retrieve workflow metadata from StackGuardian environment variables.
+
+    StackGuardian provides workflow identifiers as paths, not human-readable names.
+    We derive what we can from the available environment variables.
+    """
+    # SG_WORKFLOW_ID format: /wfgrps/<group>/wfs/<workflow>
+    # SG_WORKFLOW_RUN_ID format: /wfgrps/<group>/wfs/<workflow>/wfruns/<run>
+    workflow_id = os.environ.get("SG_WORKFLOW_ID", "")
+    run_id = os.environ.get("SG_WORKFLOW_RUN_ID", "")
+    executor = os.environ.get("SG_EXECUTOR_USER", "")
+    step_name = os.environ.get("SG_STEP_NAME", "")
+
+    # Extract workflow name from path (last component)
+    workflow_name = "unknown"
+    if workflow_id:
+        parts = workflow_id.rstrip("/").split("/")
+        # Path format: /wfgrps/<group>/wfs/<name>
+        if "wfs" in parts:
+            idx = parts.index("wfs")
+            if idx + 1 < len(parts):
+                workflow_name = parts[idx + 1]
+
+    # Extract run ID from path
+    run_id_short = "unknown"
+    if run_id:
+        parts = run_id.rstrip("/").split("/")
+        # Path format: /wfgrps/<group>/wfs/<name>/wfruns/<id>
+        if "wfruns" in parts:
+            idx = parts.index("wfruns")
+            if idx + 1 < len(parts):
+                run_id_short = parts[idx + 1]
+
+    # Construct run URL (approximate - this may vary by deployment)
+    run_url = f"https://app.stackguardian.io/run/{run_id_short}"
+
     return {
-        "workflow_name": os.environ.get("SG_WORKFLOW_NAME", "unknown"),
-        "run_id": os.environ.get("SG_RUN_ID", "unknown"),
-        "run_url": os.environ.get("SG_RUN_URL", "unknown"),
-        "status": os.environ.get("SG_WORKFLOW_STATUS", "unknown"),
-        "triggered_by": os.environ.get("SG_TRIGGERED_BY", "unknown"),
-        "step_name": os.environ.get("SG_STEP_NAME", "unknown"),
-        "step_status": os.environ.get("SG_STEP_STATUS", "unknown"),
+        "workflow_name": workflow_name,
+        "run_id": run_id_short,
+        "run_url": run_url,
+        "status": "completed",  # If we're running, status is at least "completed"
+        "triggered_by": executor,
+        "step_name": step_name,
+        "step_status": "success",
     }
 
 
@@ -200,15 +237,26 @@ def send_notification(url, title, body):
     Raises:
         Exits with error if notification fails
     """
+
     app = apprise.Apprise()
     result = app.add(url)
 
     if not result:
         err(f"Failed to add URL: {url}")
 
-    send_result = app.notify(title=title, body=body)
+    # Use MARKDOWN format for body and title
+    send_results = app.notify(
+        title=title, body=body, body_format=apprise.NotifyFormat.MARKDOWN
+    )
 
-    if not send_result:
+    # Handle both single bool and list of results
+    if send_results is True:
+        return True
+    if send_results is False:
+        err("Failed to send notification")
+
+    # If it's a list, check if any succeeded
+    if not any(send_results or []):
         err("Failed to send notification")
 
     return True

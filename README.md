@@ -29,24 +29,23 @@ For more details on creating workflow steps, see the [StackGuardian documentatio
 
 - **Type**: string
 - **Required**: Yes
-- **Description**: Title for the notification. Supports Jinja2 variable substitution.
+- **Description**: Title for the notification. Supports Jinja2 variable substitution and Markdown formatting.
 - **Default**: `Workflow Notification`
 - **Available Variables**:
-  - `workflow_name` - Name of the workflow
-  - `run_id` - Unique run identifier
+  - `workflow_name` - Name of the workflow (derived from SG_WORKFLOW_ID)
+  - `run_id` - Run identifier (derived from SG_WORKFLOW_RUN_ID)
   - `run_url` - URL to the workflow run
-  - `status` - Current workflow status
-  - `triggered_by` - Who triggered the workflow
-  - `artifact_path` - Path to workflow artifacts
-  - `step_name` - Current step name
-  - `step_status` - Current step status
+  - `status` - Current workflow status (always "completed" when step runs)
+  - `triggered_by` - Who triggered the workflow (from SG_EXECUTOR_USER)
+  - `step_name` - Current step name (from SG_STEP_NAME)
+  - `step_status` - Current step status (always "success")
   - `state.outputs.<key>` - Terraform state output values
 
 ### body
 
 - **Type**: string
 - **Required**: Yes
-- **Description**: Body of the notification. Supports Jinja2 variable substitution.
+- **Description**: Body of the notification. Supports Jinja2 variable substitution and Markdown formatting (bold, italic, lists, code blocks, links).
 - **Default**: `Workflow executed successfully`
 - **Available Variables**: Same as `title`
 
@@ -92,8 +91,17 @@ Use `state.outputs.<output_name>` in your Jinja2 templates:
 ```json
 {
   "apprise_url": "slack://webhook/abc123",
-  "title": "Deployment {{ status }}",
+  "title": "Deployment Complete",
   "body": "Workflow: {{ workflow_name }}\nRun ID: {{ run_id }}\nTriggered by: {{ triggered_by }}\nStatus: {{ status }}\nURL: {{ run_url }}"
+}
+```
+
+### Markdown formatted notification
+```json
+{
+  "apprise_url": "discord://webhook",
+  "title": "Deployment {{ status }}",
+  "body": "## {{ workflow_name }}\n\n**Status:** {{ status }}\n**Triggered by:** {{ triggered_by }}\n\n### Terraform Outputs\n- VPC: `{{ state.outputs.vpc_id }}`\n- DB Host: `{{ state.outputs.db_host }}`\n\n[View Run]({{ run_url }})"
 }
 ```
 
@@ -112,7 +120,7 @@ To create a workflow using this step, you can use the StackGuardian Workflow as 
         "schemaType": "FORM_JSONSCHEMA",
         "data": {
           "apprise_url": "slack://webhook/abc123",
-          "title": "Deployment {{ status }}",
+          "title": "Deployment Complete",
           "body": "Workflow {{ workflow_name }} completed. VPC: {{ state.outputs.vpc_id }}"
         }
       },
@@ -121,12 +129,6 @@ To create a workflow using this step, you can use the StackGuardian Workflow as 
     }
   ]
 }
-```
-
-## Building the Container
-
-```bash
-docker build -t ghcr.io/<owner>/sg-notification-wfs:latest .
 ```
 
 ## Testing Locally
@@ -138,17 +140,35 @@ export SG_MOUNTED_ARTIFACTS_DIR=/tmp/artifacts
 export SG_MOUNTED_IAC_SOURCE_CODE_DIR=/tmp
 export SG_MOUNTED_WORKSPACE_ROOT_DIR=/tmp/workspace
 export BASE64_IAC_INPUT_VARIABLES=e30=
-export SG_WORKFLOW_NAME="Test Workflow"
-export SG_RUN_ID="12345"
-export SG_RUN_URL="https://app.stackguardian.io/run/12345"
-export SG_WORKFLOW_STATUS="success"
-export SG_TRIGGERED_BY="user@example.com"
+
+# StackGuardian environment variables
+export SG_WORKFLOW_ID="/wfgrps/my-group/wfs/test-workflow"
+export SG_WORKFLOW_RUN_ID="/wfgrps/my-group/wfs/test-workflow/wfruns/run-12345"
+export SG_EXECUTOR_USER="user@example.com"
 export SG_STEP_NAME="notify"
-export SG_STEP_STATUS="success"
 
 # Create mock terraform state
 mkdir -p /tmp/artifacts /tmp/workspace
-echo '{"outputs": {"vpc_id": "vpc-12345", "db_host": "db.example.com"}}' > /tmp/workspace/terraform.tfstate
+echo '{"outputs": {"vpc_id": {"value": "vpc-12345", "type": "string"}, "db_host": {"value": "db.example.com", "type": "string"}}}' > /tmp/workspace/terraform.tfstate
 
 python3 main.py
 ```
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+### Dependencies
+
+This project uses the following third-party libraries, each licensed under their own terms:
+
+| Library | License | URL |
+|---------|---------|-----|
+| Apprise | BSD-3-Clause | https://github.com/caronc/apprise |
+| Jinja2 | BSD-3-Clause | https://github.com/pallets/jinja |
+| Python | PSF | https://www.python.org/ |
+
+When distributing this container image, ensure you comply with the license requirements of all dependencies. In particular:
+
+- **Apprise**: Licensed under BSD-3-Clause. See [Apprise License](https://github.com/caronc/apprise/blob/master/LICENSE).
+- **Jinja2**: Licensed under BSD-3-Clause. See [Jinja2 License](https://github.com/pallets/jinja/blob/main/LICENSE).
