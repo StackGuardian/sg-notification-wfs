@@ -1,117 +1,154 @@
-# StackGuardian Workflow Step Template
+# Apprise Notification Workflow Step
 
 ## Overview
 
-This template demonstrates how to create your custom StackGuardian workflow step. Good documentation helps users understand how to configure and use your workflow step effectively through the SG noCode interface. For more details on creating workflow steps, see the [StackGuardian documentation](https://docs.stackguardian.io/docs/develop/library/workflow_step/).
+This is a custom StackGuardian workflow step that sends notifications using [Apprise](https://github.com/caronc/apprise). It supports Jinja2 variable substitution in the title and body fields, allowing dynamic content based on workflow metadata and Terraform state outputs.
 
-## Best Practice for Documentation Structure
+For more details on creating workflow steps, see the [StackGuardian documentation](https://docs.stackguardian.io/docs/develop/library/workflow_step/).
 
-### Prerequisites 
+## Prerequisites
 
-Start by explaining any prerequisites, including authentication requirements, needed before using your workflow step. For example:
+- An Apprise notification URL (see [Apprise URL Schemes](https://github.com/caronc/apprise#notification-services))
 
-- Required cloud provider credentials
-- Required environment variables
-- Dependencies that must be installed
-- Permissions needed
+## Configuration Options
 
-Include links to relevant setup documentation when possible.
+### apprise_url
 
-### Configuration Options
+- **Type**: string
+- **Required**: Yes
+- **Description**: The Apprise notification URL. Supports multiple protocols including:
+  - `gotify://` - Gotify
+  - `slack://` - Slack
+  - `telegram://` - Telegram
+  - `mailto://` - Email (SMTP)
+  - `ntfy://` - Ntfy
+  - And many more (see [Apprise documentation](https://github.com/caronc/apprise#notification-services))
+- **Example**: `slack://webhook/abc123` or `gotify://token/url`
 
-Document all configuration parameters that users can set through the SG noCode form. For each parameter:
+### title
 
-1. Use clear section headers for each parameter defined in the SG noCode schema defined in `schemas/input.json`.
-2. Include:
-  - Description of what the parameter does
-  - Data type (string, number, boolean, etc.)
-  - Whether it's required
-  - Valid options/values
-  - Example values
-  - Any dependencies on other parameters
+- **Type**: string
+- **Required**: Yes
+- **Description**: Title for the notification. Supports Jinja2 variable substitution.
+- **Default**: `Workflow Notification`
+- **Available Variables**:
+  - `workflow_name` - Name of the workflow
+  - `run_id` - Unique run identifier
+  - `run_url` - URL to the workflow run
+  - `status` - Current workflow status
+  - `triggered_by` - Who triggered the workflow
+  - `artifact_path` - Path to workflow artifacts
+  - `step_name` - Current step name
+  - `step_status` - Current step status
+  - `state.outputs.<key>` - Terraform state output values
 
-## Configuring a StackGuardian Workflow
+### body
 
-To create a workflow using this step, you can use the StackGuardian Workflow as Code feature. For more details on configuring workflows as code, refer to the [official documentation](https://docs.stackguardian.io/docs/deploy/workflows/create_workflow/json/#using-workflow-as-code).
+- **Type**: string
+- **Required**: Yes
+- **Description**: Body of the notification. Supports Jinja2 variable substitution.
+- **Default**: `Workflow executed successfully`
+- **Available Variables**: Same as `title`
 
-### Example Workflow Configuration
+## Terraform State Integration
+
+This workflow step reads Terraform state from the workspace directory (set via `SG_MOUNTED_WORKSPACE_ROOT_DIR`). The state file is expected at `terraform.tfstate` in the workspace root.
+
+### Accessing State Outputs
+
+Use `state.outputs.<output_name>` in your Jinja2 templates:
 
 ```json
 {
-  "Approvers": [],
-  "DeploymentPlatformConfig": [
-   {
-    "config": {
-      "integrationId": "/integrations/cloud-connector"
-    },
-    "kind": "CLOUD_PROVIDER_KIND"
-   }
-  ],
+  "apprise_url": "slack://webhook/abc123",
+  "title": "Deployment Complete",
+  "body": "VPC ID: {{ state.outputs.vpc_id }}\nDatabase Host: {{ state.outputs.db_host }}"
+}
+```
+
+**Note**: The Terraform workflow must have outputs defined in the `outputs` block of your `.tf` files.
+
+## Example Usage
+
+### Simple notification
+```json
+{
+  "apprise_url": "slack://webhook/abc123",
+  "title": "Workflow Complete",
+  "body": "The workflow {{ workflow_name }} has finished running."
+}
+```
+
+### Using Terraform state outputs
+```json
+{
+  "apprise_url": "gotify://token/url",
+  "title": "Infrastructure Deployed",
+  "body": "VPC: {{ state.outputs.vpc_id }}\nSubnet: {{ state.outputs.subnet_id }}\nStatus: {{ status }}"
+}
+```
+
+### Detailed status notification
+```json
+{
+  "apprise_url": "slack://webhook/abc123",
+  "title": "Deployment {{ status }}",
+  "body": "Workflow: {{ workflow_name }}\nRun ID: {{ run_id }}\nTriggered by: {{ triggered_by }}\nStatus: {{ status }}\nURL: {{ run_url }}"
+}
+```
+
+## Configuring a StackGuardian Workflow
+
+To create a workflow using this step, you can use the StackGuardian Workflow as Code feature. For more details, see the [official documentation](https://docs.stackguardian.io/docs/deploy/workflows/create_workflow/json/#using-workflow-as-code).
+
+```json
+{
   "WfType": "CUSTOM",
-  "EnvironmentVariables": [
-   {
-    "config": {
-      "textValue": "example-value",
-      "varName": "ENV_VAR_NAME"
-    },
-    "kind": "PLAIN_TEXT"
-   }
-  ],
-  "VCSConfig": {
-   "iacVCSConfig": {
-    "useMarketplaceTemplate": false,
-    "customSource": {
-      "sourceConfigDestKind": "VCS_PROVIDER",
-      "config": {
-       "includeSubModule": false,
-       "ref": "main",
-       "gitCoreAutoCRLF": false,
-       "auth": "/integrations/vcs-provider",
-       "workingDir": "",
-       "repo": "https://vcs-provider.com/example-repo",
-       "isPrivate": true
-      }
-    }
-   },
-   "iacInputData": {
-    "schemaType": "RAW_JSON",
-    "data": {
-      "exampleKey": "exampleValue"
-    }
-   }
-  },
-  "Tags": [],
-  "UserJobCPU": 512,
-  "UserJobMemory": 1024,
-  "RunnerConstraints": {
-   "type": "shared"
-  },
-  "Description": "Example workflow for deploying with a custom workflow step",
-  "ResourceName": "example-resource-name",
   "WfStepsConfig": [
-   {
-    "name": "custom-wf-step",
-    "mountPoints": [],
-    "wfStepTemplateId": "/stackguardian/example-wf-step:version",
-    "wfStepInputData": {
-      "schemaType": "FORM_JSONSCHEMA",
-      "data": {
-       "key": "value"
-      }
-    },
-    "approval": false,
-    "timeout": 2100
-   }
+    {
+      "name": "notify",
+      "wfStepTemplateId": "/your-org/apprise-notification:1.0.0",
+      "wfStepInputData": {
+        "schemaType": "FORM_JSONSCHEMA",
+        "data": {
+          "apprise_url": "slack://webhook/abc123",
+          "title": "Deployment {{ status }}",
+          "body": "Workflow {{ workflow_name }} completed. VPC: {{ state.outputs.vpc_id }}"
+        }
+      },
+      "approval": false,
+      "timeout": 300
+    }
   ]
 }
 ```
 
-This JSON payload defines a workflow that runs using a custom workflow step template. It includes:
-- **Approvers**: List of users who need to approve the workflow.
-- **Deployment platform configuration**: Defines a Cloud Connector.
-- **Environment variables**: Specifies environment variables required for the workflow.
-- **VCS configuration**: Links the workflow to a Git repository using a VCS Connector.
-- **Runner constraints**: Specifies the type of runner to use: shared or private.
-- **Workflow steps**: Configures the workflow step with necessary parameters.
+## Building the Container
 
-To get started with using this template, register on StackGuardian and create an organization. Visit the [StackGuardian documentation](https://docs.stackguardian.io/docs/getting-started/setup/).
+```bash
+docker build -t ghcr.io/<owner>/sg-notification-wfs:latest .
+```
+
+## Testing Locally
+
+```bash
+# Set required environment variables
+export BASE64_WORKFLOW_STEP_INPUT_VARIABLES=$(echo '{"apprise_url": "json://test", "title": "Test {{ workflow_name }}", "body": "State: {{ state.outputs.test_output }}"}' | base64)
+export SG_MOUNTED_ARTIFACTS_DIR=/tmp/artifacts
+export SG_MOUNTED_IAC_SOURCE_CODE_DIR=/tmp
+export SG_MOUNTED_WORKSPACE_ROOT_DIR=/tmp/workspace
+export BASE64_IAC_INPUT_VARIABLES=e30=
+export SG_WORKFLOW_NAME="Test Workflow"
+export SG_RUN_ID="12345"
+export SG_RUN_URL="https://app.stackguardian.io/run/12345"
+export SG_WORKFLOW_STATUS="success"
+export SG_TRIGGERED_BY="user@example.com"
+export SG_STEP_NAME="notify"
+export SG_STEP_STATUS="success"
+
+# Create mock terraform state
+mkdir -p /tmp/artifacts /tmp/workspace
+echo '{"outputs": {"vpc_id": "vpc-12345", "db_host": "db.example.com"}}' > /tmp/workspace/terraform.tfstate
+
+python3 main.py
+```
