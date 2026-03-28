@@ -246,7 +246,10 @@ def send_notification(url, title, body):
 
     # Use MARKDOWN format for body and title
     send_results = app.notify(
-        title=title, body=body, body_format=apprise.NotifyFormat.MARKDOWN
+        title=title,
+        body=body,
+        body_format=apprise.NotifyFormat.MARKDOWN,
+        interpret_escapes=True,
     )
 
     # Handle both single bool and list of results
