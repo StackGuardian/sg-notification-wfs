@@ -157,6 +157,35 @@ How this works:
 
 **Note:** Even in template mode, you still need to provide `title` and `body`. Apprise uses these as `{{ app_title }}` and `{{ app_body }}` in your template.
 
+### Important: Body in Template Mode
+
+When using template mode with `{{ app_body }}` in your template, be aware of how variable substitution works:
+
+**What happens:**
+1. You provide: `"body": "Workflow: {{ workflow_name }}"` with Jinja2 variables
+2. Our step renders this body with Jinja2 → `"Workflow: webapp-deployment"` (correct)
+3. But `{{ app_body }}` in the template receives the **raw** body string before Jinja2 rendering
+4. Apprise substitutes `{{ app_body }}` with the raw string → brackets remain
+
+**Solution:** In template mode, keep `body` simple or use Jinja2 directly in the template:
+
+```json
+{
+  "use_template": true,
+  "title": "Notification",
+  "body": "Check details in the card below",
+  "template": {
+    "type": "AdaptiveCard",
+    "body": [
+      {"type": "TextBlock", "text": "{{ app_title }}"},
+      {"type": "TextBlock", "text": "Workflow: {{ workflow_name }}\nRun: {{ run_id }}", "wrap": true}
+    ]
+  }
+}
+```
+
+**Why:** The `{{ app_body }}` token passes the body as-is to Apprise, which doesn't understand Jinja2 variables. Use Jinja2 directly in the template for workflow variables.
+
 
 ## Configuring a StackGuardian Workflow
 

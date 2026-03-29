@@ -39,6 +39,3 @@ Thumbs.db
 test/
 mounts/
 tmp*/
-
-# uv lock file (keep pyproject.toml, generate lock locally)
-uv.lock

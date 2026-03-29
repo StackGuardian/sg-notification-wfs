@@ -33,5 +33,27 @@
       "default": "Workflow executed successfully"
     }
   },
-  "required": ["apprise_url"]
+  "required": ["apprise_url"],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "use_template": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "required": ["template"]
+      },
+      "else": {
+        "required": ["title", "body"],
+        "properties": {
+          "template": {
+            "default": ""
+          }
+        }
+      }
+    }
+  ]
 }
