@@ -1,25 +1,37 @@
 {
   "type": "object",
   "title": "Apprise Notification Step",
-  "description": "Send notifications using Apprise with Jinja2 variable substitution support",
+  "description": "Send notifications using Apprise with Jinja2 variable substitution support. Supports custom JSON templates (e.g., Microsoft Adaptive Cards), Jinja2 variables in the URL, and custom tokens via :key=value URL parameters.",
   "properties": {
     "apprise_url": {
       "type": "string",
       "title": "Apprise URL",
-      "description": "The Apprise notification URL (e.g., gotify://token/url, slack://webhook, etc.)"
+      "description": "The Apprise notification URL (e.g., gotify://token/url, slack://webhook, workflows://, or direct Power Automate URLs). Supports Jinja2 variable substitution - use {{ state.outputs.<key> }} to inject Terraform outputs. Use :key=value syntax to define custom template tokens (e.g., :target={{ state.outputs.owner }}). Available Jinja2 variables: workflow_name, run_id, run_url, status, triggered_by, step_name, step_status, state.outputs.<key>"
+    },
+    "use_template": {
+      "type": "boolean",
+      "title": "Use Template Mode",
+      "description": "Enable to use a custom JSON template (e.g., Microsoft Adaptive Cards) for the notification instead of standard title/body fields.",
+      "default": false
+    },
+    "template": {
+      "type": "string",
+      "title": "Template JSON",
+      "description": "JSON template for the notification (e.g., Microsoft Adaptive Cards). Supports two token types: (1) Jinja2: {{ workflow_name }}, {{ state.outputs.x }}, {{ target }} - processed before sending; (2) Apprise: {{ app_title }}, {{ app_body }}, {{ app_id }}, {{ app_desc }}, {{ app_color }}, {{ app_type }}, {{ app_image_url }}, {{ app_url }} - processed by Apprise. Custom tokens like {{ target }} come from URL :key=value parameters.",
+      "default": "{\n  \"$schema\": \"http://adaptivecards.io/schemas/adaptive-card.json\",\n  \"type\": \"AdaptiveCard\",\n  \"version\": \"1.5\",\n  \"body\": [\n    {\n      \"type\": \"TextBlock\",\n      \"text\": \"{{app_title}}\",\n      \"weight\": \"Bolder\",\n      \"separator\": true\n    },\n    {\n      \"type\": \"TextBlock\",\n      \"text\": \"{{app_body}}\",\n      \"wrap\": true\n    }\n  ]\n}"
     },
     "title": {
       "type": "string",
       "title": "Notification Title",
-      "description": "Title for the notification. Supports Jinja2 variable substitution and Markdown formatting. Available variables: workflow_name, run_id, run_url, status, triggered_by, step_name, step_status, state.outputs.<key>",
+      "description": "Title for the notification. Supports Jinja2 variable substitution ({{ workflow_name }}, {{ state.outputs.x }}, etc.) and Markdown formatting. This field is required when not using template mode.",
       "default": "Workflow Notification"
     },
     "body": {
       "type": "string",
       "title": "Notification Body",
-      "description": "Body of the notification. Supports Jinja2 variable substitution and Markdown formatting (bold, italic, lists, code, links). Available variables: workflow_name, run_id, run_url, status, triggered_by, step_name, step_status, state.outputs.<key>",
+      "description": "Body of the notification. Supports Jinja2 variable substitution and Markdown formatting (bold, italic, lists, code, links). This field is required when not using template mode.",
       "default": "Workflow executed successfully"
     }
   },
-  "required": ["apprise_url", "title", "body"]
+  "required": ["apprise_url"]
 }

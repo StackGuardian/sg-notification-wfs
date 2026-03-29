@@ -5,6 +5,13 @@ Apprise Notification Workflow Step for StackGuardian.
 This workflow step sends notifications via Apprise with Jinja2 template support.
 It can access Terraform state outputs from the workspace for dynamic notifications.
 
+Features:
+    - Jinja2 variable substitution in URL, title, and body fields
+    - Custom JSON templates for Microsoft Adaptive Cards and other workflow services
+    - Custom tokens via :key=value URL parameters for template substitution
+    - Terraform state output integration for dynamic content
+    - Support for Microsoft Power Automate workflows and similar services
+
 Environment Variables:
     - BASE64_WORKFLOW_STEP_INPUT_VARIABLES: Base64 encoded workflow step input params
     - SG_MOUNTED_ARTIFACTS_DIR: Directory for workflow artifacts
@@ -13,13 +20,38 @@ Environment Variables:
     - SG_WORKFLOW_RUN_ID: Run ID path (e.g., /wfgrps/my-group/wfs/my-workflow/wfruns/run-id)
     - SG_EXECUTOR_USER: User who triggered the workflow
     - SG_STEP_NAME: Name of this workflow step
+
+Input Parameters (JSON):
+    - apprise_url (required): The notification URL, supports Jinja2 variables
+    - use_template (optional): Enable custom JSON template mode
+    - template (optional): JSON template for notifications (when use_template=true)
+    - title (optional): Notification title (required when not using template)
+    - body (optional): Notification body (required when not using template)
+
+Available Jinja2 Variables:
+    - workflow_name: Name of the workflow
+    - run_id: Run identifier
+    - run_url: URL to the workflow run
+    - status: Current workflow status
+    - triggered_by: User who triggered the workflow
+    - step_name: Current step name
+    - step_status: Current step status
+    - state.outputs.<key>: Terraform state output values
+
+Template Tokens:
+    Custom tokens can be defined in the URL using :key=value syntax.
+    These are first rendered with Jinja2, then available as {{ key }} in templates.
+    Example URL: "...?format=MARKDOWN&:target={{ state.outputs.owner }}"
 """
 
 import os
 import sys
 import json
 import base64
-from datetime import datetime
+import re
+import tempfile
+import logging
+from datetime import datetime, timezone
 
 import apprise
 from jinja2 import Template
@@ -88,13 +120,16 @@ def process_workflow_inputs(encoded_input):
     if not encoded_input:
         err("BASE64_WORKFLOW_STEP_INPUT_VARIABLES not set")
 
+    params = {}
     try:
         decoded = base64.b64decode(encoded_input).decode("utf-8")
         params = json.loads(decoded)
     except Exception as e:
         err(f"Failed to decode workflow step input: {e}")
 
-    required = ["apprise_url", "title", "body"]
+    required = ["apprise_url"]
+    if not params.get("use_template"):
+        required.extend(["title", "body"])
     for field in required:
         if not params.get(field):
             err(f"{field} is required but not provided")
@@ -222,7 +257,7 @@ def render_template(template_str, variables):
         err(f"Failed to render template: {e}")
 
 
-def send_notification(url, title, body):
+def send_notification(url, title, body, template_content=None, template_variables=None):
     """
     Send a notification via Apprise.
 
@@ -230,6 +265,7 @@ def send_notification(url, title, body):
         url: Apprise notification URL
         title: Notification title
         body: Notification body
+        template_content: Optional JSON template content for workflow services
 
     Returns:
         bool: True if notification sent successfully
@@ -239,6 +275,35 @@ def send_notification(url, title, body):
     """
 
     app = apprise.Apprise()
+
+    # Enable debug logging for Apprise
+    logging.getLogger("apprise").setLevel(logging.DEBUG)
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.DEBUG)
+    logging.getLogger("apprise").addHandler(handler)
+
+    template_path = None
+
+    if template_content and template_variables:
+        # Render template with template_variables to substitute custom tokens like {{ target }}, {{ vpc_id }}
+        template_content = render_template(template_content, template_variables)
+        debug(f"Rendered template with custom tokens: {len(template_content)} chars")
+
+    if template_content:
+        # Handle both string and dict template content
+        if isinstance(template_content, dict):
+            template_content = json.dumps(template_content)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            f.write(template_content)
+            template_path = f.name
+
+        # Append template parameter to URL
+        if "?" in url:
+            url = f"{url}&template={template_path}"
+        else:
+            url = f"{url}?template={template_path}"
+        debug(f"Using template file: {template_path}")
+
     result = app.add(url)
 
     if not result:
@@ -259,8 +324,16 @@ def send_notification(url, title, body):
         err("Failed to send notification")
 
     # If it's a list, check if any succeeded
-    if not any(send_results or []):
+    if isinstance(send_results, list) and not any(send_results or []):
         err("Failed to send notification")
+
+    # Cleanup temp template file
+    if template_path:
+        try:
+            os.unlink(template_path)
+            debug(f"Cleaned up template file: {template_path}")
+        except Exception as e:
+            warn(f"Failed to cleanup template file: {e}")
 
     return True
 
@@ -273,7 +346,7 @@ def save_outputs(artifacts_dir, apprise_url):
         artifacts_dir: Path to the artifacts directory
         apprise_url: The Apprise URL used for notification
     """
-    timestamp = datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     # Save workflow outputs for downstream steps
     outputs = {
@@ -309,10 +382,14 @@ def main():
 
     # Process and validate workflow inputs
     params = process_workflow_inputs(vars["step_input"])
+    use_template = params.get("use_template", False)
     info("Starting Apprise notification workflow step")
-    debug(
-        f"Inputs: apprise_url={params['apprise_url']}, title={params['title']}, body={params['body']}"
-    )
+    debug(f"Inputs: apprise_url={params['apprise_url']}, use_template={use_template}")
+
+    if use_template:
+        debug(
+            f"Template content provided: {len(params.get('template', ''))} characters"
+        )
 
     # Get workflow metadata
     metadata = get_workflow_metadata()
@@ -328,17 +405,80 @@ def main():
         **metadata,
         "artifact_path": vars["artifacts_dir"],
         "state": {"outputs": terraform_outputs},
+        # Include Apprise standard tokens for template substitution
+        "app_title": params.get("title", "Notification"),
+        "app_body": params.get("body", " ")
+        if not use_template or params.get("body")
+        else " ",
+        "app_type": "info",
+        "app_color": "#0078D4",
     }
 
     # Render title and body with Jinja2 templates
-    rendered_title = render_template(params["title"], variables)
-    rendered_body = render_template(params["body"], variables)
+    # When using template mode, ensure body is not empty (required by Apprise for template substitution)
+    if use_template and not params.get("body"):
+        rendered_body = " "  # Single space as placeholder for template substitution
+    else:
+        rendered_body = render_template(params.get("body", ""), variables)
+
+    rendered_title = render_template(params.get("title", "Notification"), variables)
 
     info(f"Rendered title: {rendered_title}")
     debug(f"Rendered body: {rendered_body}")
 
+    # Render URL with Jinja2 template support (needed for Microsoft Adaptive Cards workflows)
+    rendered_url = render_template(params["apprise_url"], variables)
+    debug(f"Rendered URL: {rendered_url}")
+
+    # Extract custom URL parameters (e.g., :target, :vpc_id) for template substitution
+    # These are set via :key=value in the URL and consumed by Apprise's template system
+    # Pattern matches :key=value until the next :key or end of query string
+    url_vars = {}
+    raw_url = params["apprise_url"]
+    for match in re.finditer(r":(\w+)=", raw_url):
+        key = match.group(1)
+        start = match.end()
+        # Find the end of this value (next :key= or end of URL/query string)
+        next_match = re.search(r":\w+=", raw_url[start:])
+        if next_match:
+            end = start + next_match.start()
+        else:
+            # Find end of query string or end of URL
+            end = len(raw_url)
+        value = raw_url[start:end].split("&")[0]  # Stop at & params
+        # Render the value with Jinja2 to resolve any nested variables
+        try:
+            value = render_template(value, variables)
+        except Exception:
+            pass  # Keep original value if rendering fails
+        url_vars[key] = value
+    debug(f"URL custom variables: {url_vars}")
+
+    # Add URL variables to the template variables (for custom tokens in template)
+    template_variables = {**variables, **url_vars}
+
     # Send the notification
-    send_notification(params["apprise_url"], rendered_title, rendered_body)
+    template_raw = params.get("template")
+    if use_template:
+        # Handle both dict and string template content
+        if isinstance(template_raw, dict):
+            template_content = json.dumps(template_raw)
+        elif isinstance(template_raw, str):
+            template_content = template_raw
+        else:
+            template_content = None
+        debug(
+            f"Template content: {len(template_content) if template_content else 0} characters"
+        )
+    else:
+        template_content = None
+    send_notification(
+        rendered_url,
+        rendered_title,
+        rendered_body,
+        template_content,
+        template_variables,
+    )
 
     # Save outputs and facts for StackGuardian
     save_outputs(vars["artifacts_dir"], params["apprise_url"])

@@ -9,17 +9,24 @@ RUN apk add --no-cache \
     jq \
     openssh \
     openssl \
-    ca-certificates
+    ca-certificates \
+    && rm -rf /var/cache/apk/*
 
-RUN pip install --no-cache-dir apprise jinja2
+# Install uv for dependency management
+RUN pip install --no-cache-dir uv
 
-RUN rm -rf /var/cache/apk/* && \
-    rm -rf /tmp/* && \
-    rm -rf /var/tmp/*
-
+# Copy dependency files
 WORKDIR /app
+COPY pyproject.toml uv.lock ./
 
+# Install dependencies using uv
+RUN uv pip install --system --no-cache -r pyproject.toml
+
+# Copy application code
 COPY main.py ./
 RUN chmod +x main.py
+
+# Cleanup
+RUN rm -rf /tmp/* /var/tmp/*
 
 CMD ["python3", "main.py"]

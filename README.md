@@ -2,13 +2,54 @@
 
 ## Overview
 
-This is a custom StackGuardian workflow step that sends notifications using [Apprise](https://github.com/caronc/apprise). It supports Jinja2 variable substitution in the title and body fields, allowing dynamic content based on workflow metadata and Terraform state outputs.
+This is a custom StackGuardian workflow step that sends notifications using [Apprise](https://github.com/caronc/apprise). It supports Jinja2 variable substitution in the URL, title, and body fields, allowing dynamic content based on workflow metadata and Terraform state outputs. It also supports custom JSON templates for Microsoft Adaptive Cards and other workflow services.
 
 For more details on creating workflow steps, see the [StackGuardian documentation](https://docs.stackguardian.io/docs/develop/library/workflow_step/).
 
-## Prerequisites
+## Token Types: Understanding {{ }} Brackets
 
-- An Apprise notification URL (see [Apprise URL Schemes](https://github.com/caronc/apprise#notification-services))
+This step uses **two types of template brackets** for different purposes:
+
+### 1. Jinja2 Brackets `{{ }}` - Processed by this step before sending
+
+These are rendered **first** by this workflow step. Use them for:
+- Workflow variables: `{{ workflow_name }}`, `{{ run_id }}`, `{{ status }}`
+- Terraform outputs: `{{ state.outputs.vpc_id }}`, `{{ state.outputs.db_host }}`
+- Custom tokens from URL: `{{ target }}` (defined via `:target=value` in URL)
+- In the URL itself: `https://...?:target={{ state.outputs.owner }}`
+
+**Where Jinja2 brackets work:**
+- ✅ In the `apprise_url` field
+- ✅ In the `title` field
+- ✅ In the `body` field  
+- ✅ In the `template` field (for custom template tokens)
+- ✅ In URL parameters using `:key=value` syntax
+
+### 2. Apprise Brackets `{{ }}` - Processed by Apprise after we send
+
+These are rendered **later** by Apprise's template system. Use them for:
+- `{{ app_title }}` - The notification title
+- `{{ app_body }}` - The notification body
+- `{{ app_id }}` - Application identifier (default: "Apprise")
+- `{{ app_desc }}` - Application description
+- `{{ app_color }}` - Color for message type (hex code)
+- `{{ app_type }}` - Message type (info, warning, success)
+- `{{ app_image_url }}` - Image URL for message type
+- `{{ app_url }}` - Apprise instance URL
+
+**Where Apprise brackets work:**
+- ✅ In the `template` field only (when using template mode)
+
+### Summary Table
+
+| Token | Source | Processed By | Works In |
+|-------|--------|--------------|----------|
+| `{{ workflow_name }}` | Workflow metadata | This step | URL, title, body, template |
+| `{{ state.outputs.vpc_id }}` | Terraform state | This step | URL, title, body, template |
+| `{{ target }}` | URL `:target=value` | This step | URL, title, body, template |
+| `{{ app_title }}` | Notification title | Apprise | template only |
+| `{{ app_body }}` | Notification body | Apprise | template only |
+| `{{ app_color }}` | Message type | Apprise | template only |
 
 ## Configuration Options
 
@@ -16,38 +57,40 @@ For more details on creating workflow steps, see the [StackGuardian documentatio
 
 - **Type**: string
 - **Required**: Yes
-- **Description**: The Apprise notification URL. Supports multiple protocols including:
-  - `gotify://` - Gotify
-  - `slack://` - Slack
-  - `telegram://` - Telegram
-  - `mailto://` - Email (SMTP)
-  - `ntfy://` - Ntfy
-  - And many more (see [Apprise documentation](https://github.com/caronc/apprise#notification-services))
-- **Example**: `slack://webhook/abc123` or `gotify://token/url`
+- **Description**: The Apprise notification URL. Supports Jinja2 variable substitution for dynamic URLs (e.g., custom tokens for Adaptive Cards). You can use `:key=value` parameters in the URL to define custom template tokens.
+- **Jinja2 Support**: The URL itself can contain Jinja2 variables like `{{ state.outputs.my_value }}`
+- **Custom URL Tokens**: Use `:key=value` syntax to pass custom tokens to templates (e.g., `:target={{ state.outputs.vpc_id }}`). These are first rendered by Jinja2, then available as `{{ target }}` in templates.
+- **Example**: 
+  - `slack://webhook/abc123`
+  - `workflows://host/path?format=MARKDOWN&:target={{ state.outputs.vpc_id }}`
+  - Direct Power Automate URL with Jinja2 tokens
+
+### use_template
+
+- **Type**: boolean
+- **Required**: No
+- **Default**: false
+- **Description**: Enable to use a custom JSON template (e.g., Microsoft Adaptive Cards) for the notification body instead of the standard title/body fields.
+
+### template
+
+- **Type**: string
+- **Required**: When `use_template` is true
+- **Description**: JSON template for the notification. Supports both Jinja2 variables and Apprise template tokens.
 
 ### title
 
 - **Type**: string
-- **Required**: Yes
+- **Required**: Yes (when `use_template` is false)
 - **Description**: Title for the notification. Supports Jinja2 variable substitution and Markdown formatting.
 - **Default**: `Workflow Notification`
-- **Available Variables**:
-  - `workflow_name` - Name of the workflow (derived from SG_WORKFLOW_ID)
-  - `run_id` - Run identifier (derived from SG_WORKFLOW_RUN_ID)
-  - `run_url` - URL to the workflow run
-  - `status` - Current workflow status (always "completed" when step runs)
-  - `triggered_by` - Who triggered the workflow (from SG_EXECUTOR_USER)
-  - `step_name` - Current step name (from SG_STEP_NAME)
-  - `step_status` - Current step status (always "success")
-  - `state.outputs.<key>` - Terraform state output values
 
 ### body
 
 - **Type**: string
-- **Required**: Yes
-- **Description**: Body of the notification. Supports Jinja2 variable substitution and Markdown formatting (bold, italic, lists, code blocks, links).
+- **Required**: Yes (when `use_template` is false)
+- **Description**: Body of the notification. Supports Jinja2 variable substitution and Markdown formatting.
 - **Default**: `Workflow executed successfully`
-- **Available Variables**: Same as `title`
 
 ## Terraform State Integration
 
@@ -65,49 +108,57 @@ Use `state.outputs.<output_name>` in your Jinja2 templates:
 }
 ```
 
-**Note**: The Terraform workflow must have outputs defined in the `outputs` block of your `.tf` files.
-
 ## Example Usage
 
-### Simple notification
+### Example 1: Standard Notification (Jinja2 in title/body)
+
 ```json
 {
   "apprise_url": "slack://webhook/abc123",
-  "title": "Workflow Complete",
-  "body": "The workflow {{ workflow_name }} has finished running."
+  "title": "Deploy {{ workflow_name }}",
+  "body": "VPC: {{ state.outputs.vpc_id }}"
 }
 ```
 
-### Using Terraform state outputs
+This sends a simple notification with variables substituted:
+- Title becomes: "Deploy webapp-deployment"
+- Body becomes: "VPC: vpc-0123456789abcdef"
+
+### Example 2: Template Mode (Adaptive Cards with custom URL tokens)
+
 ```json
 {
-  "apprise_url": "gotify://token/url",
-  "title": "Infrastructure Deployed",
-  "body": "VPC: {{ state.outputs.vpc_id }}\nSubnet: {{ state.outputs.subnet_id }}\nStatus: {{ status }}"
+  "apprise_url": "https://...workflows/WFID/...?:target={{ state.outputs.vpc_id }}&:app={{ state.outputs.app_name }}",
+  "use_template": true,
+  "title": "Infrastructure Ready",
+  "body": "Please check the Adaptive Card for details.",
+  "template": {
+    "type": "AdaptiveCard",
+    "version": "1.5",
+    "body": [
+      {"type": "TextBlock", "text": "{{ app_title }}", "weight": "Bolder", "size": "Large"},
+      {"type": "TextBlock", "text": "Hello {{ target }}, your VPC is ready.", "wrap": true},
+      {"type": "FactSet", "facts": [
+        {"title": "App", "value": "{{ app }}"},
+        {"title": "Region", "value": "{{ state.outputs.region }}"}
+      ]}
+    ]
+  }
 }
 ```
 
-### Detailed status notification
-```json
-{
-  "apprise_url": "slack://webhook/abc123",
-  "title": "Deployment Complete",
-  "body": "Workflow: {{ workflow_name }}\nRun ID: {{ run_id }}\nTriggered by: {{ triggered_by }}\nStatus: {{ status }}\nURL: {{ run_url }}"
-}
-```
+How this works:
 
-### Markdown formatted notification
-```json
-{
-  "apprise_url": "discord://webhook",
-  "title": "Deployment {{ status }}",
-  "body": "## {{ workflow_name }}\n\n**Status:** {{ status }}\n**Triggered by:** {{ triggered_by }}\n\n### Terraform Outputs\n- VPC: `{{ state.outputs.vpc_id }}`\n- DB Host: `{{ state.outputs.db_host }}`\n\n[View Run]({{ run_url }})"
-}
-```
+1. **Jinja2 renders URL first:** `{{ state.outputs.vpc_id }}` → "vpc-abc123" → URL has `:target=vpc-abc123`
+2. **Jinja2 renders URL first:** `{{ state.outputs.app_name }}` → "myapp" → URL has `:app=myapp`
+3. **URL parameters become template tokens:** `:target=vpc-abc123` → `{{ target }}` in template
+4. **`{{ app_title }}` comes from your input:** Apprise substitutes it with "Infrastructure Ready" (from the `title` field above)
+5. **`{{ app_body }}` comes from your input:** Apprise would substitute it with "Please check..." (from the `body` field)
+
+**Note:** Even in template mode, you still need to provide `title` and `body`. Apprise uses these as `{{ app_title }}` and `{{ app_body }}` in your template.
+
 
 ## Configuring a StackGuardian Workflow
-
-To create a workflow using this step, you can use the StackGuardian Workflow as Code feature. For more details, see the [official documentation](https://docs.stackguardian.io/docs/deploy/workflows/create_workflow/json/#using-workflow-as-code).
 
 ```json
 {
@@ -149,9 +200,14 @@ export SG_STEP_NAME="notify"
 
 # Create mock terraform state
 mkdir -p /tmp/artifacts /tmp/workspace
-echo '{"outputs": {"vpc_id": {"value": "vpc-12345", "type": "string"}, "db_host": {"value": "db.example.com", "type": "string"}}}' > /tmp/workspace/terraform.tfstate
+echo '{"outputs": {"vpc_id": {"value": "vpc-12345", "type": "string"}}}' > /tmp/workspace/terraform.tfstate
 
 python3 main.py
+```
+
+Or use the test script:
+```bash
+./test_local.sh
 ```
 
 ## License
@@ -160,15 +216,8 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 ### Dependencies
 
-This project uses the following third-party libraries, each licensed under their own terms:
-
 | Library | License | URL |
 |---------|---------|-----|
 | Apprise | BSD-3-Clause | https://github.com/caronc/apprise |
 | Jinja2 | BSD-3-Clause | https://github.com/pallets/jinja |
 | Python | PSF | https://www.python.org/ |
-
-When distributing this container image, ensure you comply with the license requirements of all dependencies. In particular:
-
-- **Apprise**: Licensed under BSD-3-Clause. See [Apprise License](https://github.com/caronc/apprise/blob/master/LICENSE).
-- **Jinja2**: Licensed under BSD-3-Clause. See [Jinja2 License](https://github.com/pallets/jinja/blob/main/LICENSE).
